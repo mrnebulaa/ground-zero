@@ -22,8 +22,9 @@ export default async function NewClaim() {
         <div className="panel">
           <h2>Local access required</h2>
           <p>
-            Public submissions are disabled. Configure development
-            authentication in your local environment to contribute.
+            <Link href="/login">Sign in with a passkey</Link> to contribute.
+            Registration is default-off. Configure development authentication in
+            your local environment to contribute.
           </p>
           <Link href="/dev-login">Development sign-in →</Link>
         </div>

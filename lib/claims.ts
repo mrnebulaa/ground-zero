@@ -1,3 +1,4 @@
+import { readSession } from "./passkeys/sessions";
 import { Prisma, PrismaClient, Role } from "@prisma/client";
 import {
   claimInput,
@@ -7,7 +8,7 @@ import {
   sourceInput,
 } from "./validation";
 export class ClaimError extends Error {}
-type Actor = { id: string; role: Role } | null;
+type Actor = { id: string; role: Role; sessionHash?: string } | null;
 export function requireActor(actor: Actor) {
   if (!actor)
     throw new ClaimError(
@@ -50,6 +51,11 @@ export function claimService(db: PrismaClient) {
       const user = requireActor(actor),
         data = claimInput.parse(input);
       return db.$transaction(async (tx) => {
+        if (user.sessionHash) {
+          const current = await readSession(tx, user.sessionHash);
+          if (current.user.id !== user.id)
+            throw new ClaimError("Account mismatch.");
+        }
         const { sources, ...fields } = data;
         const claim = await tx.claim.create({
           data: { ...fields, authorId: user.id },
@@ -95,6 +101,11 @@ export function claimService(db: PrismaClient) {
         id = idInput.parse(claimId),
         data = sourceInput.parse(input);
       return db.$transaction(async (tx) => {
+        if (user.sessionHash) {
+          const current = await readSession(tx, user.sessionHash);
+          if (current.user.id !== user.id)
+            throw new ClaimError("Account mismatch.");
+        }
         const { url, ...details } = data;
         const source = await tx.source.upsert({
           where: { url },
@@ -138,6 +149,11 @@ export function claimService(db: PrismaClient) {
         id = idInput.parse(claimId),
         data = revisionInput.parse(input);
       return db.$transaction(async (tx) => {
+        if (user.sessionHash) {
+          const current = await readSession(tx, user.sessionHash);
+          if (current.user.id !== user.id)
+            throw new ClaimError("Account mismatch.");
+        }
         const existing = await tx.claim.findUniqueOrThrow({ where: { id } });
         if (existing.authorId !== user.id && user.role !== "REVIEWER")
           throw new ClaimError(
@@ -166,6 +182,11 @@ export function claimService(db: PrismaClient) {
         id = idInput.parse(claimId),
         data = reviewInput.parse(input);
       return db.$transaction(async (tx) => {
+        if (user.sessionHash) {
+          const current = await readSession(tx, user.sessionHash);
+          if (current.user.id !== user.id)
+            throw new ClaimError("Account mismatch.");
+        }
         const result = await tx.claim.updateMany({
           where: { id, version: data.version },
           data: { status: data.status, version: { increment: 1 } },

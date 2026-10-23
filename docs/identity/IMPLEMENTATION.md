@@ -1,5 +1,7 @@
 # Implementation and acceptance criteria
 
+Milestone 2B implements the internal L1 passkey/session/recovery slice behind default-off registration; see [setup and tests](../../README.md#passkey-authentication-milestone-2b). L3 grants, providers, operational appeals, full lifecycle/deletion, and public rollout remain deferred. Existing local fixture accounts are not automatically enrolled. User.username is the persistent public profile for this slice; no separate profile table or rename feature is added.
+
 Each phase requires a separate reviewed change and the acceptance evidence below; [DESIGN.md](DESIGN.md) defines policy and constraints.
 
 | Phase                        | Deliverable after approval                                                                                                                  | Exit criteria                                                                                                                              |
@@ -12,7 +14,7 @@ Each phase requires a separate reviewed change and the acceptance evidence below
 | F — optional attestation     | Isolated broker with synthetic signed fixtures first; select provider only through separate approval                                        | Contract/privacy review, strict minimal assertion, owner-only state, revocation/withdrawal drills; no document intake                      |
 | G — approved L3 appointments | Trained reviewers/moderators with verified suitability, two-person approval, expiring grants                                                | No self-approval, no ordinary moderator receipt access, appeals ready, public scope notices, independent oversight                         |
 
-L3 framework can be tested before a real L2 provider using the approved alternative suitability process; no pilot member automatically becomes staff. B–G are future implementation proposals, not permission to proceed from this design request.
+L3 framework can be tested before a real L2 provider using the approved alternative suitability process; no pilot member automatically becomes staff. C–G remain future implementation proposals and require separate approval.
 
 ## Migration and rollout
 

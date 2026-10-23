@@ -10,7 +10,10 @@ function session() {
   vi.stubEnv("NODE_ENV", "development");
   vi.stubEnv("DEV_AUTH_ENABLED", "true");
   vi.stubEnv("DEV_AUTH_SECRET", "test-only-secret-with-at-least-32-characters");
-  mocks.get.mockReturnValue({ value: createSession("local-reviewer") });
+  const signed = createSession("local-reviewer");
+  mocks.get.mockImplementation((name: string) =>
+    name === "gz-dev-session" ? { value: signed } : undefined,
+  );
 }
 afterEach(() => {
   vi.unstubAllEnvs();

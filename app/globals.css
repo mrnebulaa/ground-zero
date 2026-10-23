@@ -490,3 +490,18 @@ summary {
     flex-wrap: wrap;
   }
 }
+.checkbox-label {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.checkbox-label input {
+  width: auto;
+  flex-shrink: 0;
+}
+.narrow nav {
+  flex-wrap: wrap;
+}
+.narrow code {
+  overflow-wrap: anywhere;
+}

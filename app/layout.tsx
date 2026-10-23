@@ -25,6 +25,7 @@ export default function RootLayout({
             <nav aria-label="Main navigation">
               <Link href="/">Claims</Link>
               <Link href="/claims/new">Submit a claim</Link>
+              <Link href="/account">Account</Link>
               <Link href="/dev-login">Local access</Link>
             </nav>
           </header>

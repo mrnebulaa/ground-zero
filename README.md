@@ -2,7 +2,7 @@
 
 An open-source, nonpartisan evidence commons. Inspect claims and sources, distinguish evidence from interpretation, and keep corrections visible. Ground Zero is not an infallible arbiter of truth.
 
-**Local prototype only. Do not deploy publicly.** Public submissions are disabled by default, and development authentication never works in production.
+**Local prototype only. Do not deploy publicly.** Public registration is disabled by default, and development authentication never works in production.
 
 ## Local setup
 
@@ -32,7 +32,7 @@ Submit a statement, context, type, and at least one source URL with attribution 
 
 To exercise human review, sign out and sign in using the Reviewer test role. Publish a status with a public rationale. Contributor accounts cannot change review status. Corrections are limited to the author or a reviewer, preserve earlier snapshots, and reset review to Unreviewed. Attaching new evidence also resets review so previous judgments do not implicitly cover new material.
 
-This shared-secret role selector is **only a developer test tool**. Do not expose the development server, proxy it publicly, or use real personal information. `npm run build && npm start` serves a read-only production build with this authentication disabled, even if the development flag remains set.
+This shared-secret role selector is **only a developer test tool**. Do not expose the development server, proxy it publicly, or use real personal information. `npm run build && npm start` serves a production build with development authentication disabled, even if the development flag remains set.
 
 ### Database lifecycle
 
@@ -69,11 +69,11 @@ Integration tests clean up only their own fixtures. Browser tests leave clearly 
 - Provisional states: Unreviewed, Under Review, Supported, Disputed, Refuted, Insufficient Evidence.
 - Separate factual statements, interpretations, opinions, and unknowns.
 - PostgreSQL schema and migration for users, claims, sources, evidence, revisions, discussions/comments, moderation actions, and private audit events.
-- Fail-closed development authentication; no anonymous writes; production writes disabled.
+- Fail-closed development authentication; no anonymous writes; passkey members can contribute while production development-authentication fallback stays disabled.
 
 ## Still planned / launch blockers
 
-Public authentication, account recovery, session revocation, anti-abuse/rate limiting, moderation and appeals interfaces, privacy/redaction and retention procedures, accessible review methodology, reviewer assignment and conflicts of interest, discussion UI, search/pagination, backups/restore drills, production CSP, and independent security/accessibility reviews. Discussion and moderation models are scaffolding only; no claim is made that their workflows exist. No public API, AI adjudication, scraping, profiling, or recommendation algorithm is implemented.
+Public rollout, stronger anti-abuse controls, moderation and appeals interfaces, privacy/redaction and retention procedures, accessible review methodology, reviewer assignment and conflicts of interest, discussion UI, search/pagination, backups/restore drills, production CSP, and independent security/accessibility reviews. Discussion and moderation models are scaffolding only; no claim is made that their workflows exist. No public API, AI adjudication, scraping, profiling, or recommendation algorithm is implemented.
 
 See [architecture and tradeoffs](docs/ARCHITECTURE.md), [security policy](SECURITY.md), [charter](CHARTER.md), [contribution guide](CONTRIBUTING.md), and [community rules](CODE_OF_CONDUCT.md).
 
@@ -86,3 +86,28 @@ The [Milestone 1 review](docs/MILESTONE_1_REVIEW.md) records fixes, verification
 ## Proposed identity design
 
 [Milestone 2A: gradual identity verification](docs/identity/DESIGN.md) is a design-only proposal. Public registration remains disabled; implementation requires separate approval.
+
+## Passkey authentication (Milestone 2B)
+
+After `npm ci`, `npm run db:generate`, and `npm run db:migrate`, set `AUTH_ORIGIN=http://localhost:3000`, `AUTH_RP_ID=localhost`, and a separate `RECOVERY_CODE_KEY` generated with `openssl rand -hex 32` in `.env`. Use **http://localhost:3000** for passkeys; Secure cookies are retained on localhost by supported browsers. For any non-local origin use HTTPS; the configured RP ID must equal its hostname. Never derive allowed origins from request headers.
+
+`AUTH_REGISTRATION_ENABLED` defaults to false and is checked at both registration steps. Enable it only for isolated synthetic-account testing. Visit `/register`, then `/account` to add backup passkeys and generate eight offline recovery codes. No password, email, phone, or identity document is needed. New accounts are contributors, never reviewers/moderators; the legacy role field cannot promote passkey sessions.
+
+`/login` provides passkey reauthentication. Security changes require authentication within 15 minutes. Member sessions expire after 24 hours idle or seven days absolute; logout and revoke-all are server-side. Adding/removing credentials revokes other sessions. Save recovery codes offline; regenerating codes invalidates the previous set. Store the recovery HMAC key securely; rotating it invalidates existing codes and requires members with passkey access to generate new ones.
+
+`/recover` consumes one code, revokes sessions, and opens a recovery-only browser session. Enroll a new passkey, wait `RECOVERY_DELAY_HOURS` (24 by default; 24–48 allowed), then prove the new passkey. Attempts expire after 72 hours. An original passkey can sign in only to cancel pending recovery; cancellation revokes pending keys, codes, and sessions. Completion revokes old keys/codes. Losing all keys and codes—or losing the recovery browser and all remaining factors—can permanently lose access. There is no staff bypass or off-device notification.
+
+Run `npm run auth:prune` hourly in a local operational setup to remove expired challenge/rate/session records and expired recovery attempts/pending keys. Validity is enforced even if pruning has not run. The command reads `.env`; no scheduler is installed automatically.
+
+Tests on a disposable migrated database:
+
+```sh
+npm test
+npm run test:integration
+npm run build
+npm run test:production
+npm run test:e2e
+npm run test:passkeys
+```
+
+The last suite uses Chromium's virtual WebAuthn authenticator, synthetic accounts, and real verification. Tests advance the recovery hold directly in the disposable database; there is no runtime delay bypass. Browser suites must run sequentially because Next.js shares `.next`. Public registration, provider integration, deployment, and L3 privileges remain outside this milestone. See SECURITY.md for remaining risks.
