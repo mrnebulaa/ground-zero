@@ -1,31 +1,84 @@
 # Ground Zero
 
-An open-source, evidence-first public commons for claims, sources, civil discussion, and accountable moderation.
+An open-source, nonpartisan evidence commons. Inspect claims and sources, distinguish evidence from interpretation, and keep corrections visible. Ground Zero is not an infallible arbiter of truth.
 
-## Principles
-- Evidence over popularity; claims can be challenged.
-- Distinguish facts, interpretations, opinions, and unknowns.
-- Publish correction histories and moderation appeals.
-- Protect privacy and reject harassment, threats, and manipulation.
-- No behavioral profiling for political persuasion.
-- Governance must be accountable, including to critics.
+**Local prototype only. Do not deploy publicly.** Public submissions are disabled by default, and development authentication never works in production.
 
-## Quick start
-Requires Node.js 22+ and npm.
+## Local setup
 
-```bash
-npm install
+Requires Node.js 22.12+ (Node 22 LTS recommended), npm, and Docker with Compose running.
+
+```sh
+npm ci
+cp .env.example .env
+```
+
+Edit `.env`: replace the example database password in both `POSTGRES_PASSWORD` and `DATABASE_URL` with the same unique local password (URL-encode it in the connection string). Never commit `.env`.
+
+```sh
+docker compose up -d --wait
+npm run db:generate
+npm run db:migrate
 npm run dev
 ```
-Open http://localhost:3000.
 
-## Next milestones
-1. Claims, sources, and review-status schema in PostgreSQL.
-2. Auth, abuse prevention, and permissions.
-3. Threaded discussion, reports, and appeals.
-4. Security and accessibility review before public registration.
+Open [the local application](http://127.0.0.1:3000). The app and database bind to loopback. The library starts empty: no fabricated factual claims or evidence are seeded. If the database is unavailable, the home page explains setup; it does not silently substitute sample data.
 
-Read [the charter](docs/CHARTER.md), [contribution guide](CONTRIBUTING.md), and [code of conduct](CODE_OF_CONDUCT.md).
+### Enable local contributions
+
+Generate a secret with `openssl rand -hex 32`, put it in `DEV_AUTH_SECRET` in `.env`, and set `DEV_AUTH_ENABLED=true`. Restart `npm run dev`, visit **Local access**, enter that secret, and select the Contributor test role. The secret is entered in the local sign-in form and sent to the server; it is not persisted in browser storage; a signed, HTTP-only, SameSite=Strict cookie expires after eight hours. Rotating the secret invalidates sessions. Sign out via Local access.
+
+Submit a statement, context, type, and at least one source URL with attribution and explanation. The form accepts a second source; more sources can be attached on the detail page. HTTP(S) URLs are linked without scraping or fetching their content. Links may lead to untrusted external sites.
+
+To exercise human review, sign out and sign in using the Reviewer test role. Publish a status with a public rationale. Contributor accounts cannot change review status. Corrections are limited to the author or a reviewer, preserve earlier snapshots, and reset review to Unreviewed. Attaching new evidence also resets review so previous judgments do not implicitly cover new material.
+
+This shared-secret role selector is **only a developer test tool**. Do not expose the development server, proxy it publicly, or use real personal information. `npm run build && npm start` serves a read-only production build with this authentication disabled, even if the development flag remains set.
+
+### Database lifecycle
+
+`npm run db:migrate` applies committed migrations; `npm run db:dev -- --name descriptive_name` creates a migration during development. Commit both schema and SQL migration. `docker compose down` stops services while preserving the database volume. Back up data before removing volumes; there is no deletion workflow in this milestone.
+
+## Verification
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Integration and browser tests require a **separate, disposable PostgreSQL database**. Create one, set `DATABASE_URL` and `TEST_DATABASE_URL` to its connection string in your shell, then run:
+
+```sh
+npm run db:migrate
+npm run test:integration
+npx playwright install chromium
+npm run build
+npm run test:production
+npm run test:e2e
+```
+
+If the browser download is unavailable, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an installed Chromium executable for local verification. CI uses Playwright’s pinned browser.
+
+Integration tests clean up only their own fixtures. Browser tests leave clearly labeled fictional fixtures in the disposable database. The production browser test runs on port 3101 and confirms that an enabled development flag and correctly signed reviewer cookie cannot unlock contributions. Run it after a production build and before the development suite, which overwrites `.next`. The development browser suite starts its own loopback development server on port 3100 and checks submission, escaped untrusted text, correction history, reviewer access, and a mobile viewport. CI provisions PostgreSQL 17 and runs migration, lint, type checking, unit, integration, production build, and browser tests.
+
+## Functional in milestone 1
+
+- Responsive claim library (latest 50, chronological; no popularity ranking), claim detail, attributed evidence links, and public revision snapshots.
+- Validated claim creation, evidence attachment, author/reviewer corrections, reviewer-only status changes, and atomic audit/history writes through server actions.
+- Provisional states: Unreviewed, Under Review, Supported, Disputed, Refuted, Insufficient Evidence.
+- Separate factual statements, interpretations, opinions, and unknowns.
+- PostgreSQL schema and migration for users, claims, sources, evidence, revisions, discussions/comments, moderation actions, and private audit events.
+- Fail-closed development authentication; no anonymous writes; production writes disabled.
+
+## Still planned / launch blockers
+
+Public authentication, account recovery, session revocation, anti-abuse/rate limiting, moderation and appeals interfaces, privacy/redaction and retention procedures, accessible review methodology, reviewer assignment and conflicts of interest, discussion UI, search/pagination, backups/restore drills, production CSP, and independent security/accessibility reviews. Discussion and moderation models are scaffolding only; no claim is made that their workflows exist. No public API, AI adjudication, scraping, profiling, or recommendation algorithm is implemented.
+
+See [architecture and tradeoffs](docs/ARCHITECTURE.md), [security policy](SECURITY.md), [charter](CHARTER.md), [contribution guide](CONTRIBUTING.md), and [community rules](CODE_OF_CONDUCT.md).
 
 ## License
-AGPL-3.0-only. See LICENSE.
+
+GNU AGPL-3.0-or-later. The complete, unmodified version 3 license text is in [LICENSE](LICENSE). Project code may be used under version 3 or, at your option, any later version. Network deployments of modified versions must comply with the license's corresponding-source obligations.
+
+The [Milestone 1 review](docs/MILESTONE_1_REVIEW.md) records fixes, verification, and deferred launch protections.
