@@ -82,3 +82,7 @@ See [architecture and tradeoffs](docs/ARCHITECTURE.md), [security policy](SECURI
 GNU AGPL-3.0-or-later. The complete, unmodified version 3 license text is in [LICENSE](LICENSE). Project code may be used under version 3 or, at your option, any later version. Network deployments of modified versions must comply with the license's corresponding-source obligations.
 
 The [Milestone 1 review](docs/MILESTONE_1_REVIEW.md) records fixes, verification, and deferred launch protections.
+
+## Proposed identity design
+
+[Milestone 2A: gradual identity verification](docs/identity/DESIGN.md) is a design-only proposal. Public registration remains disabled; implementation requires separate approval.
