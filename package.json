@@ -9,17 +9,21 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude \"tests/**/*.integration.test.ts\"",
-    "test:integration": "vitest run tests/claims.integration.test.ts",
+    "test:integration": "vitest run tests/*.integration.test.ts",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:production": "playwright test --config playwright.production.config.ts"
+    "test:production": "playwright test --config playwright.production.config.ts",
+    "test:passkeys": "playwright test --config playwright.passkeys.config.ts",
+    "auth:prune": "tsx --env-file=.env scripts/prune-auth.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

@@ -37,6 +37,13 @@ enum EvidenceRelation {
 
 model User {
   id                String             @id @default(cuid())
+  username          String?            @unique
+  accountState      AccountState       @default(ACTIVE)
+  authVersion       Int                @default(0)
+  passkeys          Passkey[]
+  sessions          AuthSession[]
+  recoveryCodes     RecoveryCode[]
+  recoveries        RecoveryAttempt[]
   displayName       String
   role              Role               @default(CONTRIBUTOR)
   createdAt         DateTime           @default(now())
@@ -155,4 +162,87 @@ model AuditEvent {
   createdAt DateTime @default(now())
 
   @@index([claimId, createdAt])
+}
+
+enum AccountState {
+  ACTIVE
+  RECOVERING
+  SUSPENDED
+}
+
+enum SessionKind {
+  MEMBER
+  RECOVERY
+  CONTEST
+}
+
+model Passkey {
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicKey  Bytes
+  counter    BigInt
+  label      String
+  backedUp   Boolean
+  pending    Boolean  @default(false)
+  recoveryId String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthSession {
+  tokenHash  String      @id
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version    Int
+  kind       SessionKind
+  recoveryId String?
+  createdAt  DateTime    @default(now())
+  lastSeenAt DateTime    @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+model AuthCeremony {
+  id          String   @id @default(cuid())
+  bindingHash String   @unique
+  challenge   String
+  purpose     String
+  userId      String
+  username    String?  @unique
+  sessionHash String?
+  version     Int
+  label       String
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}
+
+model RecoveryCode {
+  hash   String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model RecoveryAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  active    Boolean  @default(true)
+  holdUntil DateTime
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthRateBucket {
+  key       String   @id
+  count     Int
+  expiresAt DateTime
 }
