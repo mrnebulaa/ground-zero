@@ -30,6 +30,22 @@ export async function readSession(
     (session.kind !== "MEMBER" && user.accountState !== "RECOVERING")
   )
     throw new AuthError("Session expired or revoked. Sign in again.");
+  if (session.kind === "RECOVERY") {
+    const attempt = session.recoveryId
+      ? await tx.recoveryAttempt.findUnique({
+          where: { id: session.recoveryId },
+        })
+      : null;
+    if (
+      !attempt ||
+      !attempt.active ||
+      attempt.userId !== user.id ||
+      attempt.expiresAt.getTime() <= now
+    )
+      throw new AuthError(
+        "Recovery attempt expired. Use an original passkey to contest or start again with an unused code.",
+      );
+  }
   if (fresh && session.createdAt.getTime() + 15 * 60000 <= now)
     throw new AuthError("Sign in again for a fresh passkey check.");
   await tx.authSession.update({

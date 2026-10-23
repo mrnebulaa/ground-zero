@@ -9,6 +9,7 @@ import {
   cookieOptions,
   sessionCookie,
 } from "@/lib/passkeys/config";
+import { limitAuthRequest, RateLimitError } from "@/lib/passkeys/limits";
 const service = authService(db);
 export async function POST(
   request: NextRequest,
@@ -34,9 +35,15 @@ export async function POST(
       .record(z.string(), z.unknown())
       .parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
     const { operation } = await params;
-    // Conservative shared pilot budget; no IP/device profiling. Not a public-launch abuse solution.
-    await service.rateLimit("auth-global", 120);
     const secret = request.cookies.get(sessionCookie)?.value ?? "";
+    await limitAuthRequest(
+      db,
+      request,
+      operation,
+      input,
+      secret,
+      request.cookies.get(ceremonyCookie)?.value ?? "",
+    );
     let result: { session?: string; binding?: string; [key: string]: unknown };
     if (operation === "begin")
       result = await service.begin(
@@ -91,7 +98,15 @@ export async function POST(
             ? error.message
             : "Unable to authenticate. Check the input or start again.",
       },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      {
+        status: error instanceof RateLimitError ? 429 : 400,
+        headers: {
+          "Cache-Control": "no-store",
+          ...(error instanceof RateLimitError
+            ? { "Retry-After": String(error.retryAfter) }
+            : {}),
+        },
+      },
     );
   }
 }

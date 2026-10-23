@@ -33,20 +33,6 @@ const envelope = z
   .passthrough();
 export function authService(db: PrismaClient) {
   return {
-    async rateLimit(key: string, limit = 60, windowMs = 60000) {
-      const bucket = hash(key + ":" + Math.floor(Date.now() / windowMs));
-      const result = await db.authRateBucket.upsert({
-        where: { key: bucket },
-        create: {
-          key: bucket,
-          count: 1,
-          expiresAt: new Date(Date.now() + windowMs),
-        },
-        update: { count: { increment: 1 } },
-      });
-      if (result.count > limit)
-        throw new AuthError("Too many attempts. Try again later.");
-    },
     async begin(
       purpose: string,
       input: Record<string, unknown>,
@@ -367,7 +353,6 @@ export function authService(db: PrismaClient) {
         .string()
         .regex(/^[a-f0-9]{32}$/)
         .parse(code);
-      await this.rateLimit("recover:" + name, 5, 900000);
       return db.$transaction(async (tx) => {
         const found = await tx.user.findUnique({ where: { username: name } });
         if (!found)
@@ -376,7 +361,9 @@ export function authService(db: PrismaClient) {
           );
         const user = await lockUser(tx, found.id);
         if (user.accountState === "SUSPENDED")
-          throw new AuthError("Recovery unavailable.");
+          throw new AuthError(
+            "Recovery unavailable. Check your username and unused code.",
+          );
         if (
           await tx.recoveryAttempt.count({
             where: {
@@ -387,7 +374,7 @@ export function authService(db: PrismaClient) {
           })
         )
           throw new AuthError(
-            "Recovery unavailable. An attempt may already be pending.",
+            "Recovery unavailable. Check your username and unused code.",
           );
         const used = await tx.recoveryCode.deleteMany({
           where: { userId: user.id, hash: recoveryHash(user.id, value) },

@@ -179,6 +179,16 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
   await expect(
     page.getByRole("button", { name: "Enroll replacement passkey" }),
   ).toBeVisible();
+  // Even after expiry, an original passkey can contest; the restricted session cannot proceed.
+  await db.recoveryAttempt.updateMany({
+    where: { userId: user.id, active: true },
+    data: { expiresAt: new Date(0) },
+  });
+  const expired = await context.request.post("/api/auth/account", {
+    headers: { origin: "http://localhost:3102" },
+    data: {},
+  });
+  expect(expired.status()).toBe(400);
   await page.goto("/login");
   await page.getByRole("button", { name: "Sign in with passkey" }).click();
   await expect(
@@ -210,4 +220,53 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+});
+
+test("HTTP throttling returns 429 without blocking other actions or networks", async ({
+  playwright,
+}) => {
+  const client = await playwright.request.newContext({
+    baseURL: "http://localhost:3102",
+    extraHTTPHeaders: {
+      origin: "http://localhost:3102",
+      "x-gz-client-ip": "192.0.2.90",
+    },
+  });
+  const other = await playwright.request.newContext({
+    baseURL: "http://localhost:3102",
+    extraHTTPHeaders: {
+      origin: "http://localhost:3102",
+      "x-gz-client-ip": "198.51.100.90",
+    },
+  });
+  try {
+    for (let i = 0; i < 5; i++)
+      expect(
+        (
+          await client.post("/api/auth/recover", {
+            data: { username: "fixture_missing", code: "00".repeat(16) },
+          })
+        ).status(),
+      ).toBe(400);
+    const throttled = await client.post("/api/auth/recover", {
+      data: { username: "fixture_missing", code: "00".repeat(16) },
+    });
+    expect(throttled.status()).toBe(429);
+    expect(Number(throttled.headers()["retry-after"])).toBeGreaterThan(0);
+    expect(
+      (
+        await client.post("/api/auth/begin", { data: { purpose: "login" } })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await other.post("/api/auth/recover", {
+          data: { username: "fixture_missing", code: "00".repeat(16) },
+        })
+      ).status(),
+    ).toBe(400);
+  } finally {
+    await client.dispose();
+    await other.dispose();
+  }
 });

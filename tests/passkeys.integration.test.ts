@@ -35,7 +35,8 @@ async function fixture() {
   );
   return { id, username, secret };
 }
-beforeAll(() => {
+beforeAll(async () => {
+  await db.authRateBucket.deleteMany({ where: { key: { startsWith: "v2:" } } });
   vi.stubEnv("AUTH_ORIGIN", "http://localhost:3102");
   vi.stubEnv("AUTH_RP_ID", "localhost");
   vi.stubEnv("RECOVERY_CODE_KEY", "ab".repeat(32));
@@ -43,6 +44,7 @@ beforeAll(() => {
 afterAll(async () => {
   await db.authCeremony.deleteMany({ where: { userId: { in: ids } } });
   await db.user.deleteMany({ where: { id: { in: ids } } });
+  await db.authRateBucket.deleteMany({ where: { key: { startsWith: "v2:" } } });
   await db.$disconnect();
   vi.unstubAllEnvs();
 });
@@ -253,4 +255,186 @@ it("recovery remains possible with ten existing keys and removal preserves step-
   await expect(
     service.begin("recover-finish", {}, recovery.session),
   ).resolves.toHaveProperty("options");
+});
+
+it("limits actions and networks independently, saturates concurrent counters, and resets expired budgets", async () => {
+  const { consumeLimit, limitAuthRequest } =
+    await import("../lib/passkeys/limits");
+  const identity = randomUUID();
+  const now = Math.floor(Date.now() / 60000) * 60000 + 1000;
+  const results = await Promise.allSettled(
+    Array.from({ length: 12 }, () =>
+      consumeLimit(db, "network", "login", identity, 3, 60000, now),
+    ),
+  );
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3);
+  await expect(
+    consumeLimit(db, "network", "login", identity + "-other", 3, 60000, now),
+  ).resolves.toBeUndefined();
+  await expect(
+    consumeLimit(db, "network", "cancel", identity, 3, 60000, now),
+  ).resolves.toBeUndefined();
+  const buckets = await db.authRateBucket.findMany({
+    where: { key: { startsWith: "v2:network:login:" } },
+  });
+  expect(buckets.every((b) => !b.key.includes(identity))).toBe(true);
+  expect(buckets.some((b) => b.count === 4)).toBe(true);
+  await expect(
+    consumeLimit(db, "network", "login", identity, 3, 60000, now + 60000),
+  ).resolves.toBeUndefined();
+  const u = await fixture();
+  // An exhausted anonymous network budget does not consume authenticated quotas.
+  vi.stubEnv("AUTH_TRUST_PROXY", "true");
+  const req = new Request("http://localhost:3102/api/auth/account", {
+    headers: { "x-gz-client-ip": "192.0.2.44" },
+  });
+  for (let i = 0; i < 60; i++)
+    await limitAuthRequest(db, req, "account", {}, "", "");
+  await expect(
+    limitAuthRequest(db, req, "account", {}, "", ""),
+  ).rejects.toThrow("Too many");
+  await expect(
+    limitAuthRequest(db, req, "account", {}, u.secret, ""),
+  ).resolves.toBeUndefined();
+  vi.stubEnv("AUTH_TRUST_PROXY", "false");
+});
+
+it("recovery guesses do not exhaust a victim's budget on another network or affect account state", async () => {
+  const { limitAuthRequest } = await import("../lib/passkeys/limits");
+  const u = await fixture();
+  const { codes } = await service.codes(u.secret);
+  vi.stubEnv("AUTH_TRUST_PROXY", "true");
+  const req = (ip: string) =>
+    new Request("http://localhost:3102/api/auth/recover", {
+      headers: { "x-gz-client-ip": ip },
+    });
+  for (let i = 0; i < 5; i++) {
+    await limitAuthRequest(
+      db,
+      req("192.0.2.55"),
+      "recover",
+      { username: u.username },
+      "",
+      "",
+    );
+    await expect(service.recover(u.username, "00".repeat(16))).rejects.toThrow(
+      "Recovery unavailable",
+    );
+  }
+  await expect(
+    limitAuthRequest(
+      db,
+      req("192.0.2.55"),
+      "recover",
+      { username: u.username },
+      "",
+      "",
+    ),
+  ).rejects.toThrow("Too many");
+  expect((await service.account(u.secret)).kind).toBe("MEMBER");
+  expect(await db.recoveryCode.count({ where: { userId: u.id } })).toBe(8);
+  await limitAuthRequest(
+    db,
+    req("198.51.100.55"),
+    "recover",
+    { username: u.username },
+    "",
+    "",
+  );
+  await expect(service.recover(u.username, codes[0])).resolves.toHaveProperty(
+    "session",
+  );
+  vi.stubEnv("AUTH_TRUST_PROXY", "false");
+});
+
+it("pending requests neither extend a hold nor consume another code; expiry invalidates recovery-only access", async () => {
+  const u = await fixture();
+  const { codes } = await service.codes(u.secret);
+  const recovery = await service.recover(u.username, codes[0]);
+  const attempt = await db.recoveryAttempt.findFirstOrThrow({
+    where: { userId: u.id, active: true },
+  });
+  for (const code of [codes[0], codes[1], "00".repeat(16)])
+    await expect(service.recover(u.username, code)).rejects.toThrow(
+      "Recovery unavailable",
+    );
+  expect(
+    await db.recoveryAttempt.findUnique({ where: { id: attempt.id } }),
+  ).toEqual(attempt);
+  expect(await db.recoveryCode.count({ where: { userId: u.id } })).toBe(7);
+  const { binding } = await service.begin(
+    "recover-enroll",
+    { label: "Replacement" },
+    recovery.session,
+  );
+  await db.recoveryAttempt.update({
+    where: { id: attempt.id },
+    data: { expiresAt: new Date(0) },
+  });
+  await expect(service.account(recovery.session)).rejects.toThrow("expired");
+  await expect(
+    service.begin("recover-enroll", { label: "Replacement" }, recovery.session),
+  ).rejects.toThrow("expired");
+  await expect(
+    service.finish(
+      binding,
+      { id: "fake", type: "public-key", response: {} },
+      recovery.session,
+    ),
+  ).rejects.toThrow("expired");
+  await expect(service.account(u.secret)).rejects.toThrow();
+  await expect(service.recover(u.username, codes[0])).rejects.toThrow();
+  const restarted = await service.recover(u.username, codes[1]);
+  await expect(service.account(recovery.session)).rejects.toThrow();
+  expect((await service.account(restarted.session)).kind).toBe("RECOVERY");
+  const user = await db.user.findUniqueOrThrow({ where: { id: u.id } });
+  const contest = await db.$transaction((tx) =>
+    issueSession(tx, u.id, user.authVersion, "CONTEST"),
+  );
+  // Cancellation and another code submission serialize; cancellation wins in either ordering.
+  const results = await Promise.allSettled([
+    service.cancel(contest),
+    service.recover(u.username, codes[2]),
+  ]);
+  expect(results[0].status).toBe("fulfilled");
+  expect(results[1].status).toBe("rejected");
+  expect(
+    (await db.user.findUniqueOrThrow({ where: { id: u.id } })).accountState,
+  ).toBe("ACTIVE");
+  expect(await db.recoveryCode.count({ where: { userId: u.id } })).toBe(0);
+  await expect(service.account(restarted.session)).rejects.toThrow();
+});
+
+it("simultaneous reuse of one recovery code creates only one attempt", async () => {
+  const u = await fixture();
+  const { codes } = await service.codes(u.secret);
+  const results = await Promise.allSettled([
+    service.recover(u.username, codes[0]),
+    service.recover(u.username, codes[0]),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect(
+    await db.recoveryAttempt.count({ where: { userId: u.id, active: true } }),
+  ).toBe(1);
+  expect(await db.recoveryCode.count({ where: { userId: u.id } })).toBe(7);
+});
+
+it("rejects another session's ceremony and ceremonies bound to revoked sessions", async () => {
+  const a = await fixture(),
+    b = await fixture();
+  const { binding } = await service.begin(
+    "add",
+    { label: "Synthetic" },
+    a.secret,
+  );
+  const response = { id: "forged", type: "public-key", response: {} };
+  await expect(service.finish(binding, response, b.secret)).rejects.toThrow(
+    "another session",
+  );
+  expect(await db.passkey.count({ where: { userId: b.id } })).toBe(1);
+  await service.logout(a.secret, true);
+  await expect(service.finish(binding, response, a.secret)).rejects.toThrow(
+    "revoked",
+  );
+  expect(await db.passkey.count({ where: { userId: a.id } })).toBe(1);
 });
