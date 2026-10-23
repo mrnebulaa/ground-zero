@@ -144,6 +144,81 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
     .getByRole("button", { name: "Enroll replacement passkey" })
     .click();
   await expect(page.getByRole("status")).toContainText("Replacement enrolled");
+  const attemptBefore = await db.recoveryAttempt.findFirstOrThrow({
+    where: { userId: user.id, active: true },
+  });
+  // The current virtual device holds only the replacement. No original is used
+  // for resumption: this models the reported loss of the original, not macOS UI.
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.waitForURL("/login");
+  await page.goto("/recover");
+  const resumeRequest = page.waitForRequest((r) =>
+    r.url().endsWith("/api/auth/finish"),
+  );
+  await page
+    .getByRole("button", {
+      name: "Resume with replacement passkey",
+      exact: true,
+    })
+    .click();
+  const resumedRequest = await resumeRequest;
+  await expect(
+    page.getByRole("heading", { name: "Recovery pending — restricted access" }),
+  ).toBeVisible();
+  expect(
+    (
+      await context.request.post("/api/auth/finish", {
+        headers: {
+          origin: "http://localhost:3102",
+          cookie: (await resumedRequest.allHeaders()).cookie ?? "",
+        },
+        data: resumedRequest.postData(),
+      })
+    ).status(),
+  ).toBe(400);
+  for (const operation of ["codes", "cancel", "remove"])
+    expect(
+      (
+        await context.request.post(`/api/auth/${operation}`, {
+          headers: { origin: "http://localhost:3102" },
+          data: { id: "unavailable" },
+        })
+      ).status(),
+    ).toBe(400);
+  await expect(
+    page.getByRole("button", { name: "Cancel unauthorized recovery" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Enroll replacement passkey" }),
+  ).toHaveCount(0);
+  await context.clearCookies();
+  await page.goto("/recover");
+  await page
+    .getByRole("button", {
+      name: "Resume with replacement passkey",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Recovery pending — restricted access" }),
+  ).toBeVisible();
+  await expect(page.locator("time")).toHaveCount(2);
+  await expect(page.locator("time").nth(0)).toHaveAttribute(
+    "dateTime",
+    attemptBefore.holdUntil.toISOString(),
+  );
+  await expect(page.locator("time").nth(1)).toHaveAttribute(
+    "dateTime",
+    attemptBefore.expiresAt.toISOString(),
+  );
+  expect(
+    await db.recoveryAttempt.findUnique({ where: { id: attemptBefore.id } }),
+  ).toEqual(attemptBefore);
+  await page.goto("/claims/new");
+  await expect(
+    page.getByRole("heading", { name: "Local access required" }),
+  ).toBeVisible();
+  await page.goto("/account");
   await page
     .getByRole("button", { name: "Finish recovery with replacement" })
     .click();
@@ -179,6 +254,20 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
   await expect(
     page.getByRole("button", { name: "Enroll replacement passkey" }),
   ).toBeVisible();
+  // Enroll on an independent virtual authenticator so the original remains
+  // available to test contest. An expired replacement must not resume.
+  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+  ({ authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options,
+  }));
+  await page.getByLabel("Passkey label").fill("Cancelled replacement");
+  await page
+    .getByRole("button", { name: "Enroll replacement passkey" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Replacement enrolled");
+  const cancelledReplacement = await cdp.send("WebAuthn.getCredentials", {
+    authenticatorId,
+  });
   // Even after expiry, an original passkey can contest; the restricted session cannot proceed.
   await db.recoveryAttempt.updateMany({
     where: { userId: user.id, active: true },
@@ -189,6 +278,23 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
     data: {},
   });
   expect(expired.status()).toBe(400);
+  await context.clearCookies();
+  await page.goto("/recover");
+  await page
+    .getByRole("button", {
+      name: "Resume with replacement passkey",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByRole("status")).toContainText("no longer available");
+  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+  ({ authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options,
+  }));
+  await cdp.send("WebAuthn.addCredential", {
+    authenticatorId,
+    credential: recoveredKeys.credentials[0],
+  });
   await page.goto("/login");
   await page.getByRole("button", { name: "Sign in with passkey" }).click();
   await expect(
@@ -202,6 +308,16 @@ test("real WebAuthn registration, login, backup keys, delayed recovery and repla
     (await db.user.findUniqueOrThrow({ where: { id: user.id } })).accountState,
   ).toBe("ACTIVE");
   expect(await db.recoveryCode.count({ where: { userId: user.id } })).toBe(0);
+  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+  ({ authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options,
+  }));
+  await cdp.send("WebAuthn.addCredential", {
+    authenticatorId,
+    credential: cancelledReplacement.credentials[0],
+  });
+  await page.getByRole("button", { name: "Sign in with passkey" }).click();
+  await expect(page.getByRole("status")).toContainText("verification failed");
   // Old pre-recovery credential cannot authenticate after completed recovery.
   await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
   ({ authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {

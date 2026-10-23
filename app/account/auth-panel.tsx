@@ -10,8 +10,15 @@ type Account = {
   kind: string;
   keys: { id: string; label: string }[];
   codeCount: number;
+  replacementEnrolled: boolean;
   attempt: { holdUntil: string; expiresAt: string } | null;
 };
+function displayTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "full",
+    timeStyle: "long",
+  }).format(new Date(value));
+}
 async function api(operation: string, body: object = {}) {
   const response = await fetch(`/api/auth/${operation}`, {
     method: "POST",
@@ -152,8 +159,9 @@ export default function AuthPanel({
         <>
           <p>
             Sign in again before changing passkeys or generating codes. If
-            recovery is pending, your original passkey can only contest that
-            recovery.
+            recovery is pending, an original passkey can only contest it. An
+            enrolled replacement resumes the restricted recovery attempt; it
+            cannot grant ordinary access until you finish after the hold.
           </p>
           <button disabled={busy} onClick={() => run(() => ceremony("login"))}>
             Sign in with passkey
@@ -161,53 +169,86 @@ export default function AuthPanel({
         </>
       )}
       {mode === "recover" && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(async () => {
-              await api("recover", { username, code: code.trim() });
-              setCode("");
-              window.location.assign("/account");
-            });
-          }}
-        >
+        <>
+          <h2>Resume an existing recovery</h2>
           <p>
-            Use one offline code. This revokes existing sessions, starts a
-            recovery hold (normally 24 hours), and requires a new passkey. Keep
-            this browser session until completion; there is no administrator
-            bypass.
+            Already enrolled a replacement? Use it to resume after signing out
+            or losing cookies. This preserves the original hold and expiry; no
+            additional code is consumed.
           </p>
-          <label>
-            Public username
-            <input
-              required
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </label>
-          <label>
-            Unused recovery code
-            <input
-              required
-              autoComplete="off"
-              spellCheck={false}
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </label>
-          <button disabled={busy}>Start recovery</button>
-        </form>
+          <button disabled={busy} onClick={() => run(() => ceremony("login"))}>
+            Resume with replacement passkey
+          </button>
+          <p>
+            To contest recovery instead,{" "}
+            <Link href="/login">sign in with an original passkey</Link>.
+          </p>
+          <h2>Start a new recovery</h2>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                await api("recover", { username, code: code.trim() });
+                setCode("");
+                window.location.assign("/account");
+              });
+            }}
+          >
+            <p>
+              Use one offline code. This revokes existing sessions, starts a
+              recovery hold (normally 24 hours), and requires a replacement
+              passkey. This replaces account access; it does not add a backup.
+              Keep this browser session until the replacement is enrolled.
+              Afterwards, that passkey can resume this attempt before it
+              expires. There is no administrator bypass.
+            </p>
+            <label>
+              Public username
+              <input
+                required
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </label>
+            <label>
+              Unused recovery code
+              <input
+                required
+                autoComplete="off"
+                spellCheck={false}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </label>
+            <button disabled={busy}>Start recovery</button>
+          </form>
+        </>
       )}
       {mode === "account" && account && (
         <>
           <h2>{account.username}</h2>
           {account.attempt && (
             <div className="notice">
-              Recovery pending. Hold ends{" "}
-              {new Date(account.attempt.holdUntil).toLocaleString()}. Attempt
-              expires {new Date(account.attempt.expiresAt).toLocaleString()}.
-              Ordinary account actions are disabled.
+              <h3>Recovery pending — restricted access</h3>
+              <p>
+                Earliest completion:{" "}
+                <time dateTime={account.attempt.holdUntil}>
+                  {displayTime(account.attempt.holdUntil)}
+                </time>
+                .
+              </p>
+              <p>
+                Attempt expires:{" "}
+                <time dateTime={account.attempt.expiresAt}>
+                  {displayTime(account.attempt.expiresAt)}
+                </time>
+                .
+              </p>
+              <p>
+                Ordinary account actions are disabled. Resuming does not reset
+                these times.
+              </p>
             </div>
           )}
           {account.kind === "MEMBER" && (
@@ -235,6 +276,13 @@ export default function AuthPanel({
               <p>
                 You must retain at least one passkey. Adding or removing a key
                 revokes your other sessions.
+              </p>
+              <h2>Add a backup passkey</h2>
+              <p>
+                Use a different security key or independently managed credential
+                store. Another passkey in the same device or synced account may
+                be refused or replace the existing one; it is not necessarily an
+                independent backup. Do not start recovery just to add a backup.
               </p>
               <form
                 onSubmit={(e) => {
@@ -292,15 +340,33 @@ export default function AuthPanel({
           )}
           {account.kind === "RECOVERY" && (
             <>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void run(() => ceremony("recover-enroll"));
-                }}
-              >
-                {labelField}
-                <button disabled={busy}>Enroll replacement passkey</button>
-              </form>
+              <h2>Replace account access</h2>
+              <p>
+                Creating a replacement in the same credential manager can
+                overwrite the original passkey, including on synced devices.
+                That original may then be unavailable to contest recovery. A
+                replacement can only resume this attempt until completion after
+                the hold; it cannot cancel recovery.
+              </p>
+              {!account.replacementEnrolled && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void run(() => ceremony("recover-enroll"));
+                  }}
+                >
+                  {labelField}
+                  <button disabled={busy}>Enroll replacement passkey</button>
+                </form>
+              )}
+              {account.replacementEnrolled && (
+                <p>
+                  Replacement enrolled. Signing out does not cancel recovery.
+                  You can use{" "}
+                  <Link href="/recover">Resume with replacement passkey</Link>{" "}
+                  before this attempt expires.
+                </p>
+              )}
               <p>
                 After the hold, select the replacement passkey to finish. Old
                 passkeys and all remaining codes will be revoked.

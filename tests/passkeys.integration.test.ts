@@ -1,4 +1,11 @@
-import { randomUUID } from "node:crypto";
+import {
+  randomUUID,
+  randomBytes,
+  generateKeyPairSync,
+  createHash,
+  sign,
+} from "node:crypto";
+import { isoCBOR } from "@simplewebauthn/server/helpers";
 import { PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, expect, it, vi } from "vitest";
 import { authService } from "../lib/passkeys/service";
@@ -437,4 +444,235 @@ it("rejects another session's ceremony and ceremonies bound to revoked sessions"
     "revoked",
   );
   expect(await db.passkey.count({ where: { userId: a.id } })).toBe(1);
+});
+
+// Synthetic ES256 authenticator assertions go through the real WebAuthn verifier.
+async function signingKey(userId: string, recoveryId?: string) {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+  const jwk = publicKey.export({ format: "jwk" });
+  const id = randomBytes(32).toString("base64url");
+  const cose = new Map<number, number | Uint8Array>([
+    [1, 2],
+    [3, -7],
+    [-1, 1],
+    [-2, Buffer.from(jwk.x!, "base64url")],
+    [-3, Buffer.from(jwk.y!, "base64url")],
+  ]);
+  await db.passkey.create({
+    data: {
+      id,
+      userId,
+      publicKey: Buffer.from(isoCBOR.encode(cose)),
+      counter: 0,
+      label: "Synthetic signing key",
+      backedUp: false,
+      pending: !!recoveryId,
+      recoveryId,
+    },
+  });
+  return {
+    id,
+    assertion(challenge: string) {
+      const client = Buffer.from(
+        JSON.stringify({
+          type: "webauthn.get",
+          challenge,
+          origin: "http://localhost:3102",
+          crossOrigin: false,
+        }),
+      );
+      const auth = Buffer.concat([
+        createHash("sha256").update("localhost").digest(),
+        Buffer.from([5, 0, 0, 0, 0]),
+      ]);
+      return {
+        id,
+        rawId: id,
+        type: "public-key",
+        clientExtensionResults: {},
+        response: {
+          clientDataJSON: client.toString("base64url"),
+          authenticatorData: auth.toString("base64url"),
+          signature: sign(
+            "sha256",
+            Buffer.concat([auth, createHash("sha256").update(client).digest()]),
+            privateKey,
+          ).toString("base64url"),
+          userHandle: Buffer.from(userId).toString("base64url"),
+        },
+      };
+    },
+  };
+}
+async function pendingFixture() {
+  const u = await fixture();
+  const original = await signingKey(u.id);
+  const { codes } = await service.codes(u.secret);
+  const recovery = await service.recover(u.username, codes[0]);
+  const attempt = await db.recoveryAttempt.findFirstOrThrow({
+    where: { userId: u.id, active: true },
+  });
+  const replacement = await signingKey(u.id, attempt.id);
+  return { ...u, original, recovery, attempt, replacement };
+}
+it("pending key proof resumes only its original restricted attempt after logout, without extending time", async () => {
+  const u = await pendingFixture();
+  await service.logout(u.recovery.session);
+  const ceremony = await service.begin("login", {});
+  const proof = u.replacement.assertion(ceremony.options.challenge);
+  const resumed = await service.finish(ceremony.binding, proof);
+  if (!resumed.session) throw new Error("Session expected");
+  const session = await db.authSession.findUniqueOrThrow({
+    where: { tokenHash: hash(resumed.session) },
+  });
+  expect(session.kind).toBe("RECOVERY");
+  expect(session.recoveryId).toBe(u.attempt.id);
+  expect(session.expiresAt).toEqual(u.attempt.expiresAt);
+  expect(
+    await db.recoveryAttempt.findUnique({ where: { id: u.attempt.id } }),
+  ).toEqual(u.attempt);
+  expect(await db.recoveryCode.count({ where: { userId: u.id } })).toBe(7);
+  const account = await service.account(resumed.session);
+  expect(account.keys).toEqual([]);
+  expect(account.codeCount).toBe(0);
+  expect(account.replacementEnrolled).toBe(true);
+  await expect(service.finish(ceremony.binding, proof)).rejects.toThrow(
+    "expired",
+  );
+  await expect(service.cancel(resumed.session)).rejects.toThrow();
+  await expect(service.codes(resumed.session)).rejects.toThrow();
+  await expect(
+    service.remove(resumed.session, u.original.id),
+  ).rejects.toThrow();
+  await expect(
+    service.begin("add", { label: "Forbidden" }, resumed.session),
+  ).rejects.toThrow();
+  await expect(
+    db.$transaction((tx) => readSession(tx, hash(resumed.session!))),
+  ).rejects.toThrow();
+  await expect(
+    service.begin("recover-finish", {}, resumed.session),
+  ).rejects.toThrow("delay");
+  await db.recoveryAttempt.update({
+    where: { id: u.attempt.id },
+    data: { holdUntil: new Date(0) },
+  });
+  const finish = await service.begin("recover-finish", {}, resumed.session);
+  const complete = await service.finish(
+    finish.binding,
+    u.replacement.assertion(finish.options.challenge),
+    resumed.session,
+  );
+  expect((await service.account(complete.session!)).kind).toBe("MEMBER");
+  await expect(service.account(resumed.session)).rejects.toThrow();
+  expect(
+    await db.passkey.findUnique({ where: { id: u.original.id } }),
+  ).toBeNull();
+});
+it("resumption rejects forged proof, mismatched handles, foreign attempts, expiry and inactive attempts", async () => {
+  const a = await pendingFixture(),
+    b = await pendingFixture();
+  const ceremony = await service.begin("login", {});
+  const proof = a.replacement.assertion(ceremony.options.challenge);
+  await expect(
+    service.finish(ceremony.binding, {
+      ...proof,
+      response: {
+        ...proof.response,
+        signature: Buffer.alloc(64).toString("base64url"),
+      },
+    }),
+  ).rejects.toThrow();
+  await expect(
+    service.finish(ceremony.binding, {
+      ...proof,
+      response: {
+        ...proof.response,
+        userHandle: Buffer.from(b.id).toString("base64url"),
+      },
+    }),
+  ).rejects.toThrow("mismatch");
+  await db.passkey.update({
+    where: { id: a.replacement.id },
+    data: { recoveryId: b.attempt.id },
+  });
+  await expect(service.finish(ceremony.binding, proof)).rejects.toThrow(
+    "no longer available",
+  );
+  await db.passkey.update({
+    where: { id: a.replacement.id },
+    data: { recoveryId: a.attempt.id },
+  });
+  await db.recoveryAttempt.update({
+    where: { id: a.attempt.id },
+    data: { expiresAt: new Date(0) },
+  });
+  await expect(service.finish(ceremony.binding, proof)).rejects.toThrow(
+    "no longer available",
+  );
+  await db.recoveryAttempt.update({
+    where: { id: a.attempt.id },
+    data: { expiresAt: a.attempt.expiresAt, active: false },
+  });
+  await expect(service.finish(ceremony.binding, proof)).rejects.toThrow(
+    "no longer available",
+  );
+  // A pending key for B cannot complete A's session-bound ceremony.
+  await db.recoveryAttempt.update({
+    where: { id: a.attempt.id },
+    data: { active: true, holdUntil: new Date(0) },
+  });
+  const finish = await service.begin("recover-finish", {}, a.recovery.session);
+  await expect(
+    service.finish(
+      finish.binding,
+      b.replacement.assertion(finish.options.challenge),
+      a.recovery.session,
+    ),
+  ).rejects.toThrow("operation");
+  expect(
+    (await db.user.findUniqueOrThrow({ where: { id: a.id } })).accountState,
+  ).toBe("RECOVERING");
+});
+it("concurrent resumption replay issues at most one session and original proof can cancel it", async () => {
+  const u = await pendingFixture();
+  const ceremony = await service.begin("login", {});
+  const proof = u.replacement.assertion(ceremony.options.challenge);
+  const results = await Promise.allSettled([
+    service.finish(ceremony.binding, proof),
+    service.finish(ceremony.binding, proof),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const original = await service.begin("login", {});
+  const contest = await service.finish(
+    original.binding,
+    u.original.assertion(original.options.challenge),
+  );
+  expect((await service.account(contest.session!)).kind).toBe("CONTEST");
+  const next = await service.begin("login", {});
+  const race = await Promise.allSettled([
+    service.finish(
+      next.binding,
+      u.replacement.assertion(next.options.challenge),
+    ),
+    service.cancel(contest.session!),
+  ]);
+  expect(race[1].status).toBe("fulfilled");
+  if (race[0].status === "fulfilled")
+    await expect(service.account(race[0].value.session!)).rejects.toThrow();
+  const cancelled = await service.begin("login", {});
+  await expect(
+    service.finish(
+      cancelled.binding,
+      u.replacement.assertion(cancelled.options.challenge),
+    ),
+  ).rejects.toThrow();
+  expect(
+    (await db.user.findUniqueOrThrow({ where: { id: u.id } })).accountState,
+  ).toBe("ACTIVE");
+  expect(
+    await db.passkey.count({ where: { userId: u.id, pending: true } }),
+  ).toBe(0);
 });

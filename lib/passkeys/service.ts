@@ -95,7 +95,9 @@ export function authService(db: PrismaClient) {
             if (!attempt.active || attempt.expiresAt <= new Date())
               throw new AuthError("Recovery attempt expired.");
             if (purpose === "recover-finish" && attempt.holdUntil > new Date())
-              throw new AuthError("The recovery delay has not elapsed.");
+              throw new AuthError(
+                `The recovery delay has not elapsed. You can finish after ${attempt.holdUntil.toISOString()}; this attempt expires at ${attempt.expiresAt.toISOString()}.`,
+              );
             if (
               purpose === "recover-enroll" &&
               (await tx.passkey.count({ where: { recoveryId: attempt.id } }))
@@ -247,7 +249,7 @@ export function authService(db: PrismaClient) {
             if (purpose === "recover-enroll")
               return {
                 message:
-                  "Replacement enrolled. After the hold, prove this passkey to finish recovery.",
+                  "Replacement enrolled. After the hold, prove this passkey to finish recovery. If you sign out or lose this session, use Resume with replacement passkey before the attempt expires.",
               };
             const user = await invalidate(tx, userId);
             return {
@@ -272,7 +274,6 @@ export function authService(db: PrismaClient) {
           if (
             user.accountState === "SUSPENDED" ||
             !user.username ||
-            (purpose === "login" && key.pending) ||
             (purpose === "recover-finish" &&
               (!key.pending ||
                 key.recoveryId !== recoveryId ||
@@ -338,6 +339,36 @@ export function authService(db: PrismaClient) {
               where: { tokenHash: hash(secret) },
               data: { revokedAt: new Date() },
             });
+          if (key.pending) {
+            // A verified pending credential proves only control of this attempt.
+            // The account lock orders resumption against cancellation/completion.
+            const attempt = key.recoveryId
+              ? await tx.recoveryAttempt.findUnique({
+                  where: { id: key.recoveryId },
+                })
+              : null;
+            if (
+              user.accountState !== "RECOVERING" ||
+              !attempt ||
+              !attempt.active ||
+              attempt.userId !== userId ||
+              attempt.expiresAt <= new Date()
+            )
+              throw new AuthError(
+                "This recovery attempt is no longer available. Use an original passkey to contest, or start a new recovery with an unused code.",
+              );
+            return {
+              session: await issueSession(
+                tx,
+                userId,
+                user.authVersion,
+                "RECOVERY",
+                attempt.id,
+                new Date(),
+                attempt.expiresAt,
+              ),
+            };
+          }
           const kind =
             user.accountState === "RECOVERING" ? "CONTEST" : "MEMBER";
           return {
@@ -515,6 +546,16 @@ export function authService(db: PrismaClient) {
                   select: { id: true, label: true, createdAt: true },
                 })
               : [],
+          replacementEnrolled:
+            session.kind === "RECOVERY" &&
+            !!(await tx.passkey.findFirst({
+              where: {
+                userId: user.id,
+                recoveryId: session.recoveryId,
+                pending: true,
+              },
+              select: { id: true },
+            })),
           codeCount:
             session.kind === "MEMBER"
               ? await tx.recoveryCode.count({ where: { userId: user.id } })
