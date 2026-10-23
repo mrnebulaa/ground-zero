@@ -1,7 +1,9 @@
-# Community Code of Conduct
+# Community code of conduct
 
-Respect people, challenge claims. No threats, harassment, discriminatory abuse, doxxing, stalking, impersonation, spam, or coordinated manipulation. Good-faith disagreement, including criticism of moderators and founders, is welcome.
+Challenge claims and institutions with evidence; treat participants with dignity. Good-faith disagreement and criticism of platform decisions are welcome regardless of viewpoint.
 
-Moderation actions should cite a specific rule, be proportionate, and provide an appeal route. Public transparency reporting must not expose victims' private information.
+Do not threaten, harass, dox, impersonate, discriminate against, or coordinate abuse toward people. Do not post spam, private records, or deceptive evidence. Disclose material conflicts and clearly label speculation, opinion, and AI-generated content.
 
-Until a dedicated private reporting channel is established, do not post sensitive reports publicly. Maintainers must configure private GitHub vulnerability reporting before inviting public community participation.
+Maintainers should apply published rules consistently, explain decisions with the specific rule involved, use proportionate action, and allow appeals to a maintainer who did not make the initial decision where possible. Keep reporter identities and sensitive investigations private. Public explanations must not repeat the harmful information.
+
+This local prototype does not yet provide reporting, moderation, or appeal interfaces. Before opening participation, maintainers must publish staffed reporting and appeal channels and response expectations. Repository participants can request a review of a moderation decision from maintainers through the repository's available contact channels without reposting sensitive content. See SECURITY.md for vulnerability reporting.

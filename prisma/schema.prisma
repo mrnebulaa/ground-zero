@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CONTRIBUTOR
+  REVIEWER
+  MODERATOR
+}
+
+enum ReviewStatus {
+  UNREVIEWED
+  UNDER_REVIEW
+  SUPPORTED
+  DISPUTED
+  REFUTED
+  INSUFFICIENT_EVIDENCE
+}
+
+enum ClaimKind {
+  FACTUAL
+  INTERPRETATION
+  OPINION
+  UNKNOWN
+}
+
+enum EvidenceRelation {
+  SUPPORTS
+  CHALLENGES
+  CONTEXT
+}
+
+model User {
+  id                String             @id @default(cuid())
+  displayName       String
+  role              Role               @default(CONTRIBUTOR)
+  createdAt         DateTime           @default(now())
+  claims            Claim[]
+  evidence          Evidence[]
+  revisions         ClaimRevision[]
+  comments          Comment[]
+  moderationActions ModerationAction[]
+  auditEvents       AuditEvent[]
+}
+
+model Claim {
+  id                String             @id @default(cuid())
+  title             String
+  description       String
+  kind              ClaimKind          @default(FACTUAL)
+  status            ReviewStatus       @default(UNREVIEWED)
+  version           Int                @default(1)
+  authorId          String
+  author            User               @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  evidence          Evidence[]
+  revisions         ClaimRevision[]
+  discussion        Discussion?
+  moderationActions ModerationAction[]
+
+  @@index([createdAt, id])
+}
+
+model Source {
+  id        String     @id @default(cuid())
+  url       String     @unique
+  createdAt DateTime   @default(now())
+  evidence  Evidence[]
+}
+
+model Evidence {
+  id            String           @id @default(cuid())
+  claimId       String
+  claim         Claim            @relation(fields: [claimId], references: [id], onDelete: Restrict)
+  sourceId      String
+  source        Source           @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  attribution   String
+  note          String
+  relation      EvidenceRelation
+  submittedById String
+  submittedBy   User             @relation(fields: [submittedById], references: [id], onDelete: Restrict)
+  createdAt     DateTime         @default(now())
+
+  @@unique([claimId, sourceId])
+}
+
+model ClaimRevision {
+  id          String       @id @default(cuid())
+  claimId     String
+  claim       Claim        @relation(fields: [claimId], references: [id], onDelete: Restrict)
+  version     Int
+  title       String
+  description String
+  kind        ClaimKind
+  status      ReviewStatus
+  reason      String
+  authorId    String
+  author      User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  createdAt   DateTime     @default(now())
+
+  @@unique([claimId, version])
+}
+
+model Discussion {
+  id        String    @id @default(cuid())
+  claimId   String    @unique
+  claim     Claim     @relation(fields: [claimId], references: [id], onDelete: Restrict)
+  createdAt DateTime  @default(now())
+  comments  Comment[]
+}
+
+model Comment {
+  id           String     @id @default(cuid())
+  discussionId String
+  discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Restrict)
+  authorId     String
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  body         String
+  createdAt    DateTime   @default(now())
+
+  @@index([discussionId, createdAt])
+}
+
+// Not exposed by public reads. A future moderation service must separate public
+// reasons and appeal instructions from private investigation material.
+model ModerationAction {
+  id                 String   @id @default(cuid())
+  claimId            String
+  claim              Claim    @relation(fields: [claimId], references: [id], onDelete: Restrict)
+  moderatorId        String
+  moderator          User     @relation(fields: [moderatorId], references: [id], onDelete: Restrict)
+  action             String
+  publicReason       String
+  appealInstructions String
+  privateNotes       String?
+  createdAt          DateTime @default(now())
+
+  @@index([claimId, createdAt])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action    String
+  claimId   String
+  createdAt DateTime @default(now())
+
+  @@index([claimId, createdAt])
+}
