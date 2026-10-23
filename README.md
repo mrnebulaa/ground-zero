@@ -85,4 +85,4 @@ The [Milestone 1 review](docs/MILESTONE_1_REVIEW.md) records fixes, verification
 
 ## Proposed identity design
 
-[Milestone 2A: gradual identity verification](docs/identity/README.md) is a design-only proposal. Public registration remains disabled; implementation requires separate approval.
+[Milestone 2A: gradual identity verification](docs/identity/DESIGN.md) is a design-only proposal. Public registration remains disabled; implementation requires separate approval.

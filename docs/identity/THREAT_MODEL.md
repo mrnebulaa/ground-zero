@@ -1,5 +1,7 @@
 # Threat model
 
+Policy: [DESIGN.md](DESIGN.md). Acceptance tests: [IMPLEMENTATION.md](IMPLEMENTATION.md#security-testing-acceptance-criteria).
+
 Assets: passkey bindings, sessions/recovery secrets, pseudonym continuity, private verification receipts, restriction/appeal records, privileged grants, evidence history, and anonymous readers' privacy. Adversaries include account thieves, scripted signups, impersonators, abusive members, colluding staff, compromised providers, and infrastructure operators. Boundaries are browser/server, public/private projections, app/broker databases, provider callbacks, staff tools, logging/backups, and exported data.
 
 | Threat                                                     | Proposed controls                                                                                                         | Residual risk / test                                                                        |
