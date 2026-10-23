@@ -61,6 +61,7 @@ export async function issueSession(
   kind: SessionKind,
   recoveryId?: string,
   authenticatedAt = new Date(),
+  expiresAt?: Date,
 ) {
   const secret = token();
   await tx.authSession.create({
@@ -72,7 +73,10 @@ export async function issueSession(
       recoveryId,
       createdAt: authenticatedAt,
       expiresAt: new Date(
-        authenticatedAt.getTime() + (kind === "MEMBER" ? 7 : 3) * 86400000,
+        Math.min(
+          authenticatedAt.getTime() + (kind === "MEMBER" ? 7 : 3) * 86400000,
+          expiresAt?.getTime() ?? Infinity,
+        ),
       ),
     },
   });
