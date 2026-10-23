@@ -19,21 +19,32 @@ export const label = (value: string) =>
     .toLowerCase()
     .replaceAll("_", " ")
     .replace(/^./, (c) => c.toUpperCase());
-const text = (min: number, max: number) => z.string().trim().min(min).max(max);
+const text = (min: number, max: number) =>
+  z
+    .string()
+    .trim()
+    .min(min)
+    .max(max)
+    .refine(
+      (value) => !value.includes("\0"),
+      "Null characters are not allowed.",
+    );
 export const sourceUrl = text(1, 2048).transform((value, ctx) => {
   try {
     const url = new URL(value);
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
-      url.password
+      url.password ||
+      url.href.length > 2048
     )
       throw new Error();
     return url.href;
   } catch {
     ctx.addIssue({
       code: "custom",
-      message: "Use an HTTP(S) source URL without embedded credentials.",
+      message:
+        "Use an HTTP(S) source URL without embedded credentials, at most 2048 characters after URL encoding.",
     });
     return z.NEVER;
   }

@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:production": "playwright test --config playwright.production.config.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

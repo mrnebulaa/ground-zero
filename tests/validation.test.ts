@@ -59,3 +59,15 @@ describe("untrusted claim input", () => {
     ).toBe(false);
   });
 });
+
+it("rejects null characters and URLs expanded beyond the storage limit", () => {
+  expect(
+    sourceUrl.safeParse("https://example.org/" + "界".repeat(300)).success,
+  ).toBe(false);
+  expect(
+    claimInput.safeParse({
+      ...claim,
+      description: "A sufficiently long text with a null \0 character",
+    }).success,
+  ).toBe(false);
+});

@@ -152,3 +152,68 @@ describe("PostgreSQL evidence workflow", () => {
     );
   });
 });
+
+it("concurrent attachments preserve consecutive history and reset a previous review", async () => {
+  const claim = await service.create(author, input);
+  await service.review(reviewer, claim.id, {
+    status: "SUPPORTED",
+    version: 1,
+    reason: "Synthetic test review only.",
+  });
+  await Promise.all(
+    ["one", "two"].map((suffix) =>
+      service.attach(author, claim.id, {
+        ...source,
+        url: `https://example.org/${prefix}/${suffix}`,
+      }),
+    ),
+  );
+  const updated = await db.claim.findUniqueOrThrow({
+    where: { id: claim.id },
+    include: { revisions: { orderBy: { version: "asc" } } },
+  });
+  expect(updated.status).toBe("UNREVIEWED");
+  expect(updated.revisions.map((r) => r.version)).toEqual([1, 2, 3, 4]);
+  expect(await db.evidence.count({ where: { claimId: claim.id } })).toBe(3);
+  expect(await db.auditEvent.count({ where: { claimId: claim.id } })).toBe(4);
+});
+it("concurrent duplicate attachments commit exactly once", async () => {
+  const claim = await service.create(author, input);
+  const data = {
+    ...source,
+    url: `https://example.org/${prefix}/duplicate-race`,
+  };
+  const results = await Promise.allSettled([
+    service.attach(author, claim.id, data),
+    service.attach(author, claim.id, data),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect(await db.evidence.count({ where: { claimId: claim.id } })).toBe(2);
+  expect(await db.claimRevision.count({ where: { claimId: claim.id } })).toBe(
+    2,
+  );
+  expect(await db.auditEvent.count({ where: { claimId: claim.id } })).toBe(2);
+});
+it("concurrent submissions reuse new source URLs in opposite input order", async () => {
+  const sources = ["shared-a", "shared-b"].map((suffix) => ({
+    ...source,
+    url: `https://example.org/${prefix}/${suffix}`,
+  }));
+  const claims = await Promise.all([
+    service.create(author, { ...input, sources }),
+    service.create(author, { ...input, sources: [...sources].reverse() }),
+  ]);
+  expect(claims).toHaveLength(2);
+  expect(
+    await db.source.count({
+      where: { url: { in: sources.map((s) => s.url) } },
+    }),
+  ).toBe(2);
+});
+it("enforces audit claim referential integrity", async () => {
+  await expect(
+    db.auditEvent.create({
+      data: { actorId: author.id, action: "TEST", claimId: "nonexistent" },
+    }),
+  ).rejects.toThrow();
+});

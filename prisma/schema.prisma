@@ -61,6 +61,7 @@ model Claim {
   updatedAt         DateTime           @updatedAt
   evidence          Evidence[]
   revisions         ClaimRevision[]
+  auditEvents       AuditEvent[]
   discussion        Discussion?
   moderationActions ModerationAction[]
 
@@ -150,6 +151,7 @@ model AuditEvent {
   actor     User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
   action    String
   claimId   String
+  claim     Claim    @relation(fields: [claimId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now())
 
   @@index([claimId, createdAt])

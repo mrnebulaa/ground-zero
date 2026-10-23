@@ -54,12 +54,15 @@ export function claimService(db: PrismaClient) {
         const claim = await tx.claim.create({
           data: { ...fields, authorId: user.id },
         });
-        for (const item of sources) {
+        // Acquire shared source rows in a stable order to avoid opposite-order locks.
+        for (const item of [...sources].sort((a, b) =>
+          a.url < b.url ? -1 : a.url > b.url ? 1 : 0,
+        )) {
           const { url, ...details } = item;
           const source = await tx.source.upsert({
             where: { url },
             create: { url },
-            update: {},
+            update: { url },
           });
           await tx.evidence.create({
             data: {
@@ -96,7 +99,7 @@ export function claimService(db: PrismaClient) {
         const source = await tx.source.upsert({
           where: { url },
           create: { url },
-          update: {},
+          update: { url },
         });
         if (
           await tx.evidence.findUnique({

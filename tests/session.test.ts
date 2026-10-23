@@ -49,3 +49,20 @@ describe("development authentication", () => {
     expect(requireReviewer({ id: "test", role: "REVIEWER" }).id).toBe("test");
   });
 });
+
+it("rejects a valid development session and session creation in production", () => {
+  const token = createSession("local-reviewer");
+  expect(verifySession(token)).toBe("local-reviewer");
+  vi.stubEnv("NODE_ENV", "production");
+  expect(verifySession(token)).toBeNull();
+  expect(() => createSession("local-reviewer")).toThrow();
+});
+it.each([
+  undefined,
+  "",
+  "user.abc.sig",
+  "user.9999999999999999999999." + "a".repeat(64),
+  "user.1." + "x".repeat(64),
+])("rejects malformed sessions without throwing (%s)", (value) => {
+  expect(verifySession(value)).toBeNull();
+});

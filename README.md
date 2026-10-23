@@ -26,7 +26,7 @@ Open [the local application](http://127.0.0.1:3000). The app and database bind t
 
 ### Enable local contributions
 
-Generate a secret with `openssl rand -hex 32`, put it in `DEV_AUTH_SECRET` in `.env`, and set `DEV_AUTH_ENABLED=true`. Restart `npm run dev`, visit **Local access**, enter that secret, and select the Contributor test role. The secret stays server-side and is not stored in the browser; a signed, HTTP-only, SameSite=Strict cookie expires after eight hours. Rotating the secret invalidates sessions. Sign out via Local access.
+Generate a secret with `openssl rand -hex 32`, put it in `DEV_AUTH_SECRET` in `.env`, and set `DEV_AUTH_ENABLED=true`. Restart `npm run dev`, visit **Local access**, enter that secret, and select the Contributor test role. The secret is entered in the local sign-in form and sent to the server; it is not persisted in browser storage; a signed, HTTP-only, SameSite=Strict cookie expires after eight hours. Rotating the secret invalidates sessions. Sign out via Local access.
 
 Submit a statement, context, type, and at least one source URL with attribution and explanation. The form accepts a second source; more sources can be attached on the detail page. HTTP(S) URLs are linked without scraping or fetching their content. Links may lead to untrusted external sites.
 
@@ -53,12 +53,14 @@ Integration and browser tests require a **separate, disposable PostgreSQL databa
 npm run db:migrate
 npm run test:integration
 npx playwright install chromium
+npm run build
+npm run test:production
 npm run test:e2e
 ```
 
 If the browser download is unavailable, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an installed Chromium executable for local verification. CI uses Playwright’s pinned browser.
 
-Integration tests clean up only their own fixtures. Browser tests leave clearly labeled fictional fixtures in the disposable database. The browser suite starts its own loopback development server on port 3100 and checks submission, escaped untrusted text, correction history, reviewer access, and a mobile viewport. CI provisions PostgreSQL 17 and runs migration, lint, type checking, unit, integration, production build, and browser tests.
+Integration tests clean up only their own fixtures. Browser tests leave clearly labeled fictional fixtures in the disposable database. The production browser test runs on port 3101 and confirms that an enabled development flag and correctly signed reviewer cookie cannot unlock contributions. Run it after a production build and before the development suite, which overwrites `.next`. The development browser suite starts its own loopback development server on port 3100 and checks submission, escaped untrusted text, correction history, reviewer access, and a mobile viewport. CI provisions PostgreSQL 17 and runs migration, lint, type checking, unit, integration, production build, and browser tests.
 
 ## Functional in milestone 1
 
@@ -78,3 +80,5 @@ See [architecture and tradeoffs](docs/ARCHITECTURE.md), [security policy](SECURI
 ## License
 
 GNU AGPL-3.0-or-later. The complete, unmodified version 3 license text is in [LICENSE](LICENSE). Project code may be used under version 3 or, at your option, any later version. Network deployments of modified versions must comply with the license's corresponding-source obligations.
+
+The [Milestone 1 review](docs/MILESTONE_1_REVIEW.md) records fixes, verification, and deferred launch protections.
